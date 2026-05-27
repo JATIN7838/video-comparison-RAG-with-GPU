@@ -10,13 +10,27 @@ class Settings(BaseSettings):
     PORT: int = 9000
 
     RETRIEVAL_API_KEY: str | None = None
+    MODEL_BACKEND: str = "local"
 
     @property
     def reload(self) -> bool:
         return self.ENVIRONMENT.lower().startswith("dev")
 
+    @property
+    def use_hf(self) -> bool:
+        return self.MODEL_BACKEND.lower() in ("huggingface", "hf")
+
     EMBEDDING_MODEL: str = "BAAI/bge-large-en-v1.5"
     EMBEDDING_BATCH_SIZE: int = 30
+    # Used when MODEL_BACKEND=huggingface (no local model to query the dim from).
+    EMBEDDING_DIM: int = 1024
+
+    # Hugging Face Inference Endpoints (TEI). Required when MODEL_BACKEND=huggingface.
+    HF_TOKEN: str | None = None
+    HF_EMBEDDING_ENDPOINT_URL: str | None = None
+    HF_RERANKER_ENDPOINT_URL: str | None = None
+    HF_TIMEOUT: float = 60.0
+    HF_MAX_RETRIES: int = 4  # retries on cold-start / 503 while endpoint scales up
 
     RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     RERANK_CANDIDATE_K: int = 15

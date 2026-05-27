@@ -7,8 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers.ingest import router as ingest_router
 from app.routers.retrieve import router as retrieve_router
-from app.services.embeddings import get_device, get_embedding_model
-from app.services.reranker import get_reranker
+from app.services import embeddings, reranker
 from app.services.sparse import get_sparse_model
 from app.services.vector_store import ensure_collection
 
@@ -17,18 +16,13 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(f"[{settings.APP_NAME}] device: {get_device()}")
-    model = get_embedding_model()
-    dim = model.get_embedding_dimension()
-    print(f"[{settings.APP_NAME}] embedding model loaded (dim={dim})")
+    print(f"[{settings.APP_NAME}] model backend: {settings.MODEL_BACKEND}")
+    dim = embeddings.warmup()
     ensure_collection(dim)
     print(f"[{settings.APP_NAME}] qdrant collection ready: {settings.QDRANT_COLLECTION}")
-    # Warm the FastEmbed sparse BM25 model + cross-encoder so the first
-    # request isn't blocked on downloads / NLTK assets.
     get_sparse_model()
     print(f"[{settings.APP_NAME}] sparse bm25 model loaded (Qdrant/bm25, lemmatized)")
-    get_reranker()
-    print(f"[{settings.APP_NAME}] reranker loaded: {settings.RERANKER_MODEL}")
+    reranker.warmup()
 
     if settings.RETRIEVAL_API_KEY:
         print(f"[{settings.APP_NAME}] API key auth ENABLED (header: X-API-Key)")

@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "GPU-side retrieval + inference layer for the multi-agentic YouTube RAG system."
 readme = "README.md"
 requires-python = ">=3.13"
+# Base deps run BOTH backends except the local neural models.
+# MODEL_BACKEND=huggingface needs only these (CPU box, no GPU).
 dependencies = [
     "fastapi>=0.124.1,<1.0.0",
     "uvicorn[standard]>=0.30",
@@ -11,16 +13,23 @@ dependencies = [
     "pydantic-settings>=2.4",
     "python-dotenv>=1.0",
     "requests==2.32.5",
+    "numpy>=1.26",
     "youtube-transcript-api==1.2.4",
     "yt-dlp==2026.3.17",
     "qdrant-client==1.18.0",
-    "sentence-transformers==5.4.1",
     "langchain==1.2.15",
     "langchain-community==0.4.1",
     "langchain-text-splitters==1.1.2",
-    "torch==2.10.0+cu128",
     "fastembed>=0.4.2",
     "nltk>=3.9",
+]
+
+# Local model backend (MODEL_BACKEND=local). Pulls torch + the GPU stack.
+#   uv sync --extra gpu
+[project.optional-dependencies]
+gpu = [
+    "torch==2.10.0+cu128",
+    "sentence-transformers==5.4.1",
 ]
 
 [tool.uv]

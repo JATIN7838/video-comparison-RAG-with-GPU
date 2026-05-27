@@ -5,11 +5,15 @@ GPU-backed **ingestion + retrieval engine** for a multi-agentic YouTube video an
 This repo is the **retrieval + inference layer**. It is paired with a separate
 **cognitive layer** repo built on the **Google ADK** framework (orchestration, memory,
 multi-agent reasoning, response synthesis). That repo calls this service's HTTP
-endpoints as tools — this repo owns every GPU-heavy operation (embeddings, sparse
-encoding, cross-encoder reranking) and the vector database.
+endpoints as tools — this repo owns the neural operations (embeddings,
+cross-encoder reranking) and the vector database.
 
-> ⚠️ **Requires a CUDA-capable GPU.** Models load onto `cuda` when available and fall
-> back to CPU only for local dev. Production is expected to run on GPU.
+> **Two model backends** (`MODEL_BACKEND`):
+> - **`local`** — loads the dense + cross-encoder models on a **CUDA GPU** (CPU works for
+>   dev). Use when you have a GPU box.
+> - **`huggingface`** — offloads dense + reranking to **HF Inference Endpoints**, so this
+>   service runs on a **plain CPU instance** with no GPU bill. BM25/sparse always runs
+>   locally on CPU in both modes.
 
 ---
 
@@ -79,15 +83,19 @@ timestamp-accurate references.
 
 ## Models
 
-| Role | Model | Notes |
-|------|-------|-------|
-| Dense embeddings | `BAAI/bge-large-en-v1.5` | 1024-dim, runs on CUDA |
-| Sparse / BM25 | `Qdrant/bm25` (FastEmbed) | stemmer off; **WordNet lemmatization** applied instead |
-| Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` | lightweight industry-standard cross-encoder |
+| Role | Model | `local` | `huggingface` |
+|------|-------|---------|---------------|
+| Dense embeddings | `BAAI/bge-large-en-v1.5` (1024-dim) | on GPU/CPU | HF TEI `/embed` endpoint |
+| Reranker | `cross-encoder/ms-marco-MiniLM-L-6-v2` | on GPU/CPU | HF TEI `/rerank` endpoint |
+| Sparse / BM25 | `Qdrant/bm25` (FastEmbed) | local CPU | local CPU (same) |
 
-> **Model hosting:** models are currently **downloaded at startup** when the service is
-> hosted. The plan is to later serve them via **Hugging Face Inference Endpoints**
-> directly instead of loading them in-process.
+BM25 isn't a neural model — it's a CPU tokenizer (term frequencies; IDF computed inside
+Qdrant) with **WordNet lemmatization** (FastEmbed's stemmer is disabled). It never needs
+a GPU or an endpoint, so it stays local in both backends.
+
+> **Model hosting:** in `local` mode models download at startup. In `huggingface` mode
+> they are served from **HF Inference Endpoints** (use scale-to-zero so you only pay
+> per request) — this lets the repo deploy on a CPU box with no idle GPU cost.
 
 ---
 
@@ -95,9 +103,9 @@ timestamp-accurate references.
 
 - **FastAPI** — HTTP layer
 - **Qdrant** — vector DB (named dense + sparse vectors, native RRF)
-- **SentenceTransformers** — dense embeddings + cross-encoder
-- **FastEmbed + NLTK** — sparse BM25 with lemmatization
-- **PyTorch (CUDA 12.8)** — GPU runtime
+- **SentenceTransformers + PyTorch (CUDA 12.8)** — local dense + cross-encoder (`gpu` extra only)
+- **HF Inference Endpoints (TEI)** — dense + reranking in `huggingface` mode
+- **FastEmbed + NLTK** — sparse BM25 with lemmatization (always local)
 - **yt-dlp + youtube-transcript-api** — metadata + transcripts
 - **LangChain text splitters** — `RecursiveCharacterTextSplitter` (chunk 800 / overlap 200)
 
@@ -105,25 +113,40 @@ timestamp-accurate references.
 
 ## Setup
 
+**Local (GPU) backend** — `MODEL_BACKEND=local`:
+
 ```bash
-uv sync                      # installs deps (incl. torch cu128)
+uv sync --extra gpu          # base deps + torch (cu128) + sentence-transformers
 cp .env.example .env         # set RETRIEVAL_API_KEY, QDRANT_URL, etc.
 uv run python main.py        # serves on :9000
 ```
 
-First start downloads the models and NLTK assets (slow); later starts are fast.
+**Hugging Face backend** — `MODEL_BACKEND=huggingface` (no GPU, no torch):
+
+```bash
+uv sync                      # base deps only (CPU box)
+cp .env.example .env         # set MODEL_BACKEND=huggingface + HF_* vars below
+uv run python main.py
+```
+
+First `local` start downloads models + NLTK assets (slow); later starts are fast.
 
 ### Configuration (`.env`)
 
 | Var | Default | Purpose |
 |-----|---------|---------|
+| `MODEL_BACKEND` | `local` | `local` (GPU models) or `huggingface` (HF endpoints) |
 | `RETRIEVAL_API_KEY` | — | Shared secret for `X-API-Key`. Unset → auth disabled (dev only) |
 | `ENVIRONMENT` | `dev` | `dev*` enables hot reload |
 | `QDRANT_URL` | — | Qdrant server URL; unset → embedded on-disk store |
-| `EMBEDDING_MODEL` | `BAAI/bge-large-en-v1.5` | dense model |
-| `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | reranker |
+| `EMBEDDING_MODEL` | `BAAI/bge-large-en-v1.5` | dense model (`local` mode) |
+| `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | reranker (`local` mode) |
+| `HF_TOKEN` | — | HF auth (`huggingface` mode) |
+| `HF_EMBEDDING_ENDPOINT_URL` | — | TEI embeddings endpoint (`huggingface` mode) |
+| `HF_RERANKER_ENDPOINT_URL` | — | TEI rerank endpoint (`huggingface` mode) |
+| `EMBEDDING_DIM` | `1024` | Vector size used when no local model is loaded |
 
-See [`app/config.py`](app/config.py) for the full list (chunking, candidate/top-K, RRF).
+See [`app/config.py`](app/config.py) for the full list (chunking, candidate/top-K, RRF, retries).
 
 ---
 
